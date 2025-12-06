@@ -57,25 +57,44 @@ cmake llama.cpp -B llama.cpp/build \
 # --- 4. Build the project ---
 echo ""
 echo "----------------------------------------------------------------"
-echo "Building project (Release mode)..."
+echo "Select Build Option"
 echo "----------------------------------------------------------------"
-# -j: Uses all available cores
-# --clean-first: Clean build directory before building
-cmake --build llama.cpp/build --config Release -j --clean-first
+echo "1. Build everything (Default)"
+echo "2. Build only llama-cli, llama-gguf-split, and llama-server"
+echo ""
 
-# --- 5. Copy the binary ---
+read -p "Enter your choice (1 or 2): " build_choice
+
 echo ""
 echo "----------------------------------------------------------------"
-echo "Copying binary..."
+echo "Building project (Release mode)..."
 echo "----------------------------------------------------------------"
 
-if [ -f "llama.cpp/build/bin/llama-server" ]; then
-    cp llama.cpp/build/bin/llama-server llama.cpp/
-    echo "Success! 'llama-server' has been copied to the 'llama.cpp' folder."
+if [[ "$build_choice" == "2" ]]; then
+    # Option 2: Build specific targets
+    cmake --build llama.cpp/build --config Release -j --clean-first --target llama-cli llama-gguf-split llama-server
 else
-    echo "Error: Binary 'llama-server' not found in build output."
-    exit 1
+    # Option 1: Build everything (Default)
+    cmake --build llama.cpp/build --config Release -j --clean-first
 fi
+
+# --- 5. Copy the binaries ---
+echo ""
+echo "----------------------------------------------------------------"
+echo "Copying binaries..."
+echo "----------------------------------------------------------------"
+
+# Define the targets to copy
+targets=("llama-cli" "llama-gguf-split" "llama-server")
+
+for target in "${targets[@]}"; do
+    if [ -f "llama.cpp/build/bin/$target" ]; then
+        cp "llama.cpp/build/bin/$target" llama.cpp/
+        echo "Success! '$target' has been copied to the 'llama.cpp' folder."
+    else
+        echo "Warning: Binary '$target' not found in build output."
+    fi
+done
 
 echo ""
 echo "Build complete."
