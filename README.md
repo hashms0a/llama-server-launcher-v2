@@ -3,14 +3,13 @@
 
 A Tkinter GUI for launching `llama-server` from the llama.cpp project with common parameters. This tool simplifies the process of running LLM models locally by providing a user-friendly interface for configuring server options, managing model settings, and handling server processes.
 
-<img width="1408" height="878" alt="2025-12-05_17-47" src="https://github.com/user-attachments/assets/cf7dc08d-2e5a-4fe1-8e67-09c78c8e0208" />
-
 ## Features
 
 - **Persistent Settings**: Saves and restores settings per GGUF file
 - **Process Management**: Launch server in terminal or background with kill functionality
 - **Command Preview**: Shows the exact command that will be executed
 - **Model Search**: Filter GGUF files in your model directory
+- **Model Information**: Automatic display of model metadata (architecture, layers, context size, quantization)
 - **OpenAI-Compatible API**: Full support for OpenAI API endpoints
 - **Multimodal Support**: Configure mmproj for vision models
 - **Comprehensive Parameters**: Access to most llama-server options
@@ -24,7 +23,34 @@ A Tkinter GUI for launching `llama-server` from the llama.cpp project with commo
 
 ## Installation
 
-### Option 1: Automated Build (Recommended)
+### 1. Create Virtual Environment
+
+Create and activate a Python virtual environment:
+
+```bash
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate
+```
+
+### 2. Install Python Dependencies
+
+Install the required Python packages for model metadata analysis:
+
+```bash
+pip install -r requirements.txt --break-system-packages
+```
+
+Or install manually:
+```bash
+pip install gguf
+```
+
+*Note: The `gguf` library is lightweight and recommended for metadata extraction. If unavailable, the launcher will still work but won't display model information.*
+
+### 3. Build llama.cpp
+
+#### Option A: Automated Build (Recommended)
 
 Use the provided `build_llamacpp.sh` script to automatically build llama.cpp:
 
@@ -48,7 +74,7 @@ The script will:
 - Build the project in Release mode using all available CPU cores
 - Copy the `llama-server` binary to the `llama.cpp` folder
 
-### Option 2: Manual Installation
+#### Option B: Manual Installation
 
 1. **Install dependencies manually**:
    ```bash
@@ -73,12 +99,13 @@ The script will:
    cp build/bin/llama-server .
    ```
 
-3. **Download the launcher**:
-   Save the `llama_server_launcher_v5.py` file to your preferred location
+### 4. Download the Launcher
 
-4. **Make executable** (optional):
+Save the `llama_server_launcher_v6.py` file to your preferred location
+
+5. **Make executable** (optional):
    ```bash
-   chmod +x llama_server_launcher_v5.py
+   chmod +x llama_server_launcher_v6.py
    ```
 
 ## Usage
@@ -87,7 +114,7 @@ The script will:
 
 1. **Launch the GUI**:
    ```bash
-   python3 llama_server_launcher_v5.py
+   python3 llama_server_launcher_v6.py
    ```
 
 2. **Configure llama-server path**:
@@ -100,11 +127,16 @@ The script will:
    - Select the folder containing your GGUF model files
    - Use the search box to filter models
 
-4. **Configure parameters**:
+4. **View model information**:
+   - Select a model from the dropdown
+   - Model metadata will be displayed (architecture, layers, context size, quantization, file size)
+   - Information is extracted automatically if `gguf` library is installed
+
+5. **Configure parameters**:
    - **Common Parameters Tab**: Network, performance, and sampling settings
    - **Additional Parameters Tab**: API settings, multimodal, batch options, and flags
 
-5. **Launch the server**:
+6. **Launch the server**:
    - Choose "Run in Terminal" or "Run in Background"
    - Click "Launch Server"
    - The API endpoint information will be displayed
@@ -113,7 +145,7 @@ The script will:
 
 #### Network Settings
 - **Host**: `0.0.0.0` (all interfaces) or `localhost`
-- **Port**: Default `8033`
+- **Port**: Default `8033` (updated from v5)
 
 #### Performance Settings
 - **GPU Layers (-ngl)**: Number of layers to offload to GPU (`99` = all)
@@ -130,6 +162,17 @@ The script will:
 - **API Key**: Optional authentication key
 - **Model Alias**: Name returned by `/v1/models`
 - **Chat Template**: Custom Jinja2 template or file
+
+### Model Information Display
+
+When you select a GGUF model, the launcher automatically analyzes and displays:
+- **Architecture**: Model architecture (e.g., llama, mistral, mixtral)
+- **Layers**: Number of transformer layers
+- **Context**: Context window size (displayed in K for large values)
+- **Size**: File size in GB
+- **Quant**: Quantization type (e.g., Q4_K_M, Q8_0, F16)
+
+*Note: Model analysis requires the `gguf` Python library. Without it, only file size will be shown.*
 
 ### Advanced Features
 
@@ -164,7 +207,7 @@ Once running, the server provides OpenAI-compatible endpoints:
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8033/v1",
+    base_url="http://localhost:8033/v1",  # Note: Default port changed to 8033
     api_key="not-needed"  # Optional if API key is set
 )
 
@@ -186,6 +229,11 @@ Settings are stored in `~/.llama_server_launcher_config.json`:
 - Default values for all options
 
 ## Troubleshooting
+
+### Model Information Not Showing
+- Install the `gguf` library: `pip install gguf`
+- Or install `llama-cpp-python` as an alternative: `pip install llama-cpp-python`
+- Without these libraries, only file size will be displayed
 
 ### Build Issues
 - Ensure you have an NVIDIA GPU and CUDA toolkit installed for `DGGML_CUDA=ON`
@@ -219,6 +267,7 @@ The launcher tries multiple terminal emulators. If none are found:
 - **Batch Size**: Leave empty for default unless you know what you're doing
 - **API Key**: Use for production deployments
 - **Model Alias**: Set to a friendly name for easier API usage
+- **Model Analysis**: Install `gguf` library for automatic model metadata display
 
 ## Supported Terminal Emulators
 
