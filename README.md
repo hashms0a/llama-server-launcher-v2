@@ -1,10 +1,8 @@
-
 # Llama Server Launcher
 
 A Tkinter GUI for launching `llama-server` from the llama.cpp project with common parameters. This tool simplifies the process of running LLM models locally by providing a user-friendly interface for configuring server options, managing model settings, and handling server processes.
 
 <img width="762" height="896" alt="2025-12-06_10-55" src="https://github.com/user-attachments/assets/a7378451-a7e0-4c91-a22d-e62b4942eb6a" />
-
 
 ## Features
 
@@ -16,6 +14,13 @@ A Tkinter GUI for launching `llama-server` from the llama.cpp project with commo
 - **OpenAI-Compatible API**: Full support for OpenAI API endpoints
 - **Multimodal Support**: Configure mmproj for vision models
 - **Comprehensive Parameters**: Access to most llama-server options
+- **Favorites System**: Manage and organize models with custom notes
+  - **★ Toggle Button**: Click to add/remove model from favorites
+  - **Star Indicator**: Favorites show with ★ prefix in dropdown and appear first
+  - **Notes**: Add custom notes for each model (e.g., "Best for coding", "24GB VRAM")
+  - **Auto-save**: Notes save on Enter key or when clicking elsewhere
+  - **Auto-favorite**: Adding a note automatically marks model as favorite
+  - **Persistence**: Favorites and notes saved to config file
 
 ## Requirements
 
@@ -230,6 +235,7 @@ Settings are stored in `~/.llama_server_launcher_config.json`:
 - Last used paths and directories
 - Per-model parameter settings
 - Default values for all options
+- Favorites and notes (new in this version)
 
 ## Troubleshooting
 
@@ -271,6 +277,7 @@ The launcher tries multiple terminal emulators. If none are found:
 - **API Key**: Use for production deployments
 - **Model Alias**: Set to a friendly name for easier API usage
 - **Model Analysis**: Install `gguf` library for automatic model metadata display
+- **Favorites**: Use the star button to quickly access frequently used models
 
 ## Supported Terminal Emulators
 
