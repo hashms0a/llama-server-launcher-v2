@@ -2,7 +2,8 @@
 
 A Tkinter GUI for launching `llama-server` from the llama.cpp project with common parameters. This tool simplifies the process of running LLM models locally by providing a user-friendly interface for configuring server options, managing model settings, and handling server processes.
 
-<img width="762" height="896" alt="2025-12-06_10-55" src="https://github.com/user-attachments/assets/a7378451-a7e0-4c91-a22d-e62b4942eb6a" />
+<img width="721" height="936" alt="2025-12-08_19-01" src="https://github.com/user-attachments/assets/266516be-6668-403c-923d-25a59378813d" />
+
 
 ## Features
 
