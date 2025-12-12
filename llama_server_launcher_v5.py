@@ -534,17 +534,24 @@ class LlamaServerLauncher:
             self.chat_template_file_var.set(path)
 
     def refresh_gguf_list(self):
-        """Refresh the list of GGUF files in the selected directory."""
+        """Refresh the list of GGUF files in the selected directory and subdirectories."""
         gguf_dir = SafeVar.get_str(self.gguf_dir_var)
         if not gguf_dir or not os.path.isdir(gguf_dir):
             self.gguf_files = []
             self.gguf_combo["values"] = []
             return
 
-        self.gguf_files = sorted([
-            f for f in os.listdir(gguf_dir)
-            if f.lower().endswith(".gguf")
-        ])
+        # Recursively find all .gguf files in directory and subdirectories
+        gguf_files = []
+        for root, dirs, files in os.walk(gguf_dir):
+            for f in files:
+                if f.lower().endswith(".gguf"):
+                    # Store relative path from gguf_dir
+                    full_path = os.path.join(root, f)
+                    rel_path = os.path.relpath(full_path, gguf_dir)
+                    gguf_files.append(rel_path)
+
+        self.gguf_files = sorted(gguf_files)
 
         # Apply current filter
         self.filter_gguf_list()
@@ -995,10 +1002,11 @@ class LlamaServerLauncher:
             full_path = os.path.join(SafeVar.get_str(self.gguf_dir_var), selected)
             self.load_settings_for_model(full_path)
 
-            # Default model alias to GGUF filename (without extension) if not set
+            # Default model alias to GGUF filename (without extension and path)
             if not SafeVar.get_str(self.model_alias_var):
-                # Remove .gguf extension
-                model_name = selected[:-5] if selected.lower().endswith(".gguf") else selected
+                # Get base filename and remove .gguf extension
+                base_name = os.path.basename(selected)
+                model_name = base_name[:-5] if base_name.lower().endswith(".gguf") else base_name
                 self.model_alias_var.set(model_name)
 
             # Start GGUF analysis in background
