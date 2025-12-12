@@ -542,8 +542,9 @@ class LlamaServerLauncher:
             return
 
         # Recursively find all .gguf files in directory and subdirectories
+        # followlinks=True to include symbolic link directories
         gguf_files = []
-        for root, dirs, files in os.walk(gguf_dir):
+        for root, dirs, files in os.walk(gguf_dir, followlinks=True):
             for f in files:
                 if f.lower().endswith(".gguf"):
                     # Store relative path from gguf_dir
