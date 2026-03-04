@@ -37,7 +37,7 @@ DEFAULT_LLAMA_SERVER_PATH = os.path.expanduser("~/llama.cpp/llama-server")
 
 class SafeVar:
     """Wrapper for Tkinter variables that handles empty/invalid values gracefully."""
-    
+
     @staticmethod
     def get_int(var: tk.StringVar, default: int = 0) -> int:
         """Safely get integer value from a StringVar."""
@@ -48,7 +48,7 @@ class SafeVar:
             return int(value)
         except (tk.TclError, ValueError):
             return default
-    
+
     @staticmethod
     def get_float(var: tk.StringVar, default: float = 0.0) -> float:
         """Safely get float value from a StringVar."""
@@ -59,7 +59,7 @@ class SafeVar:
             return float(value)
         except (tk.TclError, ValueError):
             return default
-    
+
     @staticmethod
     def get_str(var: tk.StringVar, default: str = "") -> str:
         """Safely get string value from a StringVar."""
@@ -71,38 +71,38 @@ class SafeVar:
 
 class LlamaServerLauncher:
     """Main application class for Llama Server Launcher."""
-    
+
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Llama Server Launcher")
-        self.root.geometry("750x1000")
-        self.root.minsize(700, 1000)
-        
+        self.root.geometry("750x850")
+        self.root.minsize(700, 750)
+
         # Process handle for background server
         self.server_process: Optional[subprocess.Popen] = None
-        
+
         # Load configuration
         self.config = self.load_config()
-        
+
         # Initialize variables
         self.init_variables()
-        
+
         # Build UI
         self.build_ui()
-        
+
         # Load last used directory and settings
         self.load_last_session()
-        
+
         # Bind cleanup on close
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-    
+
     def init_variables(self):
         """Initialize all Tkinter variables."""
         # Path variables
         self.llama_server_path_var = tk.StringVar(value=self.config.get("llama_server_path", DEFAULT_LLAMA_SERVER_PATH))
         self.gguf_dir_var = tk.StringVar(value=self.config.get("last_gguf_dir", ""))
         self.selected_gguf_var = tk.StringVar()
-        
+
         # Common parameters (using StringVar for safe handling)
         self.host_var = tk.StringVar(value="0.0.0.0")
         self.port_var = tk.StringVar(value="8033")
@@ -116,7 +116,7 @@ class LlamaServerLauncher:
         self.top_p_var = tk.StringVar(value="0.9")
         self.top_k_var = tk.StringVar(value="40")
         self.presence_penalty_var = tk.StringVar(value="0.0")
-        
+
         # Additional parameters
         self.mmproj_path_var = tk.StringVar(value="")
         self.batch_size_var = tk.StringVar(value="")
@@ -135,279 +135,338 @@ class LlamaServerLauncher:
         self.log_disable_var = tk.BooleanVar(value=False)
         self.parallel_var = tk.StringVar(value="")
         self.custom_args_var = tk.StringVar(value="")
-        
+
         # KV Cache settings
         self.cache_type_k_var = tk.StringVar(value="")
         self.cache_type_v_var = tk.StringVar(value="")
         self.cache_type_options = ["", "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
-        
+
         # OpenAI-compatible API settings
         self.api_key_var = tk.StringVar(value="")
         self.model_alias_var = tk.StringVar(value="")
         self.chat_template_var = tk.StringVar(value="")
         self.chat_template_file_var = tk.StringVar(value="")
-        
+
         # Run mode
         self.run_in_terminal_var = tk.BooleanVar(value=True)
-        
+
         # Available GGUF files list
         self.gguf_files: list[str] = []
-        
+
         # Search filter for models
         self.model_search_var = tk.StringVar()
-        
+
         # Model analysis info
         self.model_info_var = tk.StringVar(value="No model selected")
         self.analysis_thread: Optional[threading.Thread] = None
         self.current_analysis_path: Optional[str] = None
         self.last_analysis_result: Optional[Dict[str, Any]] = None
-        
+
         # Favorites - dict of {model_path: {"note": "...", "added": "timestamp"}}
         self.favorites: Dict[str, Dict[str, str]] = self.config.get("favorites", {})
-        
+
         # Note for current model
         self.note_var = tk.StringVar()
-    
+
+        # Presets - dict of {preset_name: {settings_dict}}
+        self.presets: Dict[str, dict] = self.config.get("presets", {})
+
+        # Tracks which preset each model last used: {model_path: preset_name}
+        self.model_preset_map: Dict[str, str] = self.config.get("model_preset_map", {})
+
+        # Current preset name entry
+        self.preset_name_var = tk.StringVar()
+
+        # Active preset label for current model
+        self.active_preset_var = tk.StringVar(value="No preset active")
+
     def build_ui(self):
         """Build the main user interface."""
-        # Main container with padding
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
+        # Outermost container
+        outer_frame = ttk.Frame(self.root)
+        outer_frame.pack(fill=tk.BOTH, expand=True)
+
+        # --- Scrollable area for main content ---
+        self.main_canvas = tk.Canvas(outer_frame, highlightthickness=0)
+        main_scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=self.main_canvas.yview)
+        self.main_canvas.configure(yscrollcommand=main_scrollbar.set)
+
+        main_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Inner frame that holds all the content
+        main_frame = ttk.Frame(self.main_canvas, padding="10")
+        self.main_canvas_window = self.main_canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+        # Resize inner frame width to match canvas
+        def _on_canvas_configure(event):
+            self.main_canvas.itemconfig(self.main_canvas_window, width=event.width)
+        self.main_canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Update scroll region when inner frame changes size
+        def _on_frame_configure(event):
+            self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+        main_frame.bind("<Configure>", _on_frame_configure)
+
+        # Mousewheel scrolling - bind/unbind when mouse enters/leaves the canvas
+        def _on_mousewheel(event):
+            self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux(event):
+            if event.num == 4:
+                self.main_canvas.yview_scroll(-3, "units")
+            elif event.num == 5:
+                self.main_canvas.yview_scroll(3, "units")
+
+        def _bind_mousewheel(event):
+            self.main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            self.main_canvas.bind_all("<Button-4>", _on_mousewheel_linux)
+            self.main_canvas.bind_all("<Button-5>", _on_mousewheel_linux)
+
+        def _unbind_mousewheel(event):
+            self.main_canvas.unbind_all("<MouseWheel>")
+            self.main_canvas.unbind_all("<Button-4>")
+            self.main_canvas.unbind_all("<Button-5>")
+
+        self.main_canvas.bind("<Enter>", _bind_mousewheel)
+        self.main_canvas.bind("<Leave>", _unbind_mousewheel)
+
         # Llama server path section
         self.build_server_path_section(main_frame)
-        
+
         # GGUF file selection section
         self.build_gguf_section(main_frame)
-        
+
         # Notebook for tabs
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        
+
         # Common parameters tab
         common_tab = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(common_tab, text="Common Parameters")
         self.build_common_params_tab(common_tab)
-        
+
         # Additional parameters tab
         additional_tab = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(additional_tab, text="Additional Parameters")
         self.build_additional_params_tab(additional_tab)
-        
+
+        # Presets tab
+        presets_tab = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(presets_tab, text="Presets")
+        self.build_presets_tab(presets_tab)
+
         # Command preview section
         self.build_command_preview_section(main_frame)
-        
+
         # Control buttons section
         self.build_control_buttons(main_frame)
-        
+
         # Status bar
         self.build_status_bar(main_frame)
-    
+
     def build_server_path_section(self, parent):
         """Build the llama-server path selection section."""
         frame = ttk.LabelFrame(parent, text="Llama Server Executable", padding="5")
         frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         path_frame = ttk.Frame(frame)
         path_frame.pack(fill=tk.X)
-        
+
         ttk.Entry(path_frame, textvariable=self.llama_server_path_var, width=60).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(path_frame, text="Browse...", command=self.browse_llama_server).pack(side=tk.LEFT, padx=(5, 0))
-    
+
     def build_gguf_section(self, parent):
         """Build the GGUF file selection section."""
         frame = ttk.LabelFrame(parent, text="Model Selection", padding="5")
         frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         # Directory selection
         dir_frame = ttk.Frame(frame)
         dir_frame.pack(fill=tk.X, pady=(0, 5))
-        
+
         ttk.Label(dir_frame, text="GGUF Directory:").pack(side=tk.LEFT)
         ttk.Entry(dir_frame, textvariable=self.gguf_dir_var, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
         ttk.Button(dir_frame, text="Browse...", command=self.browse_gguf_dir).pack(side=tk.LEFT)
-        
+
         # Search box
         search_frame = ttk.Frame(frame)
         search_frame.pack(fill=tk.X, pady=(0, 5))
-        
+
         ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
         search_entry = ttk.Entry(search_frame, textvariable=self.model_search_var, width=30)
         search_entry.pack(side=tk.LEFT, padx=(5, 5))
         self.model_search_var.trace_add("write", self.filter_gguf_list)
         ttk.Button(search_frame, text="Clear", command=lambda: self.model_search_var.set("")).pack(side=tk.LEFT)
-        
+
         # GGUF file dropdown
         file_frame = ttk.Frame(frame)
         file_frame.pack(fill=tk.X)
-        
+
         ttk.Label(file_frame, text="Select Model:").pack(side=tk.LEFT)
         self.gguf_combo = ttk.Combobox(file_frame, textvariable=self.selected_gguf_var, state="readonly", width=55)
         self.gguf_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
         self.gguf_combo.bind("<<ComboboxSelected>>", self.on_gguf_selected)
         ttk.Button(file_frame, text="Refresh", command=self.refresh_gguf_list).pack(side=tk.LEFT)
-        
+
         # Favorite button
         self.favorite_btn = ttk.Button(file_frame, text="☆", width=3, command=self.toggle_favorite)
         self.favorite_btn.pack(side=tk.LEFT, padx=(5, 0))
-        
+
         # Model info display
         info_frame = ttk.Frame(frame)
         info_frame.pack(fill=tk.X, pady=(5, 0))
-        
+
         self.model_info_label = ttk.Label(info_frame, textvariable=self.model_info_var, foreground="gray", font=("TkDefaultFont", 9))
         self.model_info_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
+
         # Favorite note display/edit
         note_frame = ttk.Frame(frame)
         note_frame.pack(fill=tk.X, pady=(5, 0))
-        
+
         ttk.Label(note_frame, text="Note:").pack(side=tk.LEFT)
         self.note_entry = ttk.Entry(note_frame, textvariable=self.note_var, width=50)
         self.note_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
         self.note_entry.bind("<Return>", self.save_note)
         self.note_entry.bind("<FocusOut>", self.save_note)
         ttk.Button(note_frame, text="Save Note", command=self.save_note).pack(side=tk.LEFT)
-    
+
     def build_common_params_tab(self, parent):
         """Build the common parameters tab."""
         # Create scrollable frame
         canvas = tk.Canvas(parent, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
+
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         # Network settings
         network_frame = ttk.LabelFrame(scrollable_frame, text="Network Settings", padding="5")
         network_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(network_frame, "Host (--host):", self.host_var, "IP address to bind (0.0.0.0 for all)", 0)
         self.create_param_row(network_frame, "Port (--port):", self.port_var, "Port number (default: 8033)", 1)
-        
+
         # GPU/Performance settings
         perf_frame = ttk.LabelFrame(scrollable_frame, text="Performance Settings", padding="5")
         perf_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(perf_frame, "GPU Layers (-ngl):", self.ngl_var, "Number of layers to offload to GPU (99 = all)", 0)
         self.create_param_row(perf_frame, "MoE Experts (-ncmoe):", self.ncmoe_var, "Number of MoE experts to use (leave empty for default)", 1)
         self.create_param_row(perf_frame, "Threads (--threads):", self.threads_var, "Number of threads (-1 = auto)", 2)
         self.create_param_row(perf_frame, "Context Size (--ctx-size):", self.ctx_size_var, "Context window size in tokens", 3)
-        
+
         # Sampling settings
         sampling_frame = ttk.LabelFrame(scrollable_frame, text="Sampling Settings", padding="5")
         sampling_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(sampling_frame, "Temperature (--temp):", self.temp_var, "Sampling temperature (0.0-2.0)", 0)
         self.create_param_row(sampling_frame, "Min P (--min-p):", self.min_p_var, "Minimum probability threshold (0.0-1.0)", 1)
         self.create_param_row(sampling_frame, "Top P (--top-p):", self.top_p_var, "Top-p sampling probability (0.0-1.0)", 2)
         self.create_param_row(sampling_frame, "Top K (--top-k):", self.top_k_var, "Top-k filtering (0 = disabled)", 3)
         self.create_param_row(sampling_frame, "Presence Penalty:", self.presence_penalty_var, "Presence penalty (-2.0 to 2.0)", 4)
         self.create_param_row(sampling_frame, "Repeat Penalty:", self.repeat_penalty_var, "Repeat penalty (1.0 = disabled)", 5)
-        
+
         # Flags
         flags_frame = ttk.LabelFrame(scrollable_frame, text="Flags", padding="5")
         flags_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         ttk.Checkbutton(flags_frame, text="Enable Jinja templates (--jinja)", variable=self.jinja_var).pack(anchor=tk.W)
-        
+
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Enable mousewheel scrolling
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-    
+
     def build_additional_params_tab(self, parent):
         """Build the additional parameters tab."""
         # Create scrollable frame
         canvas = tk.Canvas(parent, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
+
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         # OpenAI-compatible API settings
         api_frame = ttk.LabelFrame(scrollable_frame, text="OpenAI-Compatible API Settings", padding="5")
         api_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(api_frame, "API Key (--api-key):", self.api_key_var, "API key for authentication (optional)", 0)
         self.create_param_row(api_frame, "Model Alias (--alias):", self.model_alias_var, "Model name returned by /v1/models", 1)
         self.create_param_row(api_frame, "Chat Template (--chat-template):", self.chat_template_var, "Jinja2 chat template (optional)", 2)
-        
+
         template_file_row = ttk.Frame(api_frame)
         template_file_row.pack(fill=tk.X, pady=2)
         ttk.Label(template_file_row, text="Chat Template File:", width=25).pack(side=tk.LEFT)
         ttk.Entry(template_file_row, textvariable=self.chat_template_file_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
         ttk.Button(template_file_row, text="Browse...", command=self.browse_chat_template_file).pack(side=tk.LEFT)
-        
+
         ttk.Label(api_frame, text="Endpoints: /v1/chat/completions, /v1/completions, /v1/models, /v1/embeddings", foreground="gray").pack(anchor=tk.W, pady=(5, 0))
-        
+
         # Multimodal settings
         mm_frame = ttk.LabelFrame(scrollable_frame, text="Multimodal Settings", padding="5")
         mm_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         mmproj_row = ttk.Frame(mm_frame)
         mmproj_row.pack(fill=tk.X, pady=2)
         ttk.Label(mmproj_row, text="MMProj Path (--mmproj):", width=25).pack(side=tk.LEFT)
         ttk.Entry(mmproj_row, textvariable=self.mmproj_path_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
         ttk.Button(mmproj_row, text="Browse...", command=self.browse_mmproj).pack(side=tk.LEFT)
-        
+
         # Batch settings
         batch_frame = ttk.LabelFrame(scrollable_frame, text="Batch Settings", padding="5")
         batch_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(batch_frame, "Batch Size (-b):", self.batch_size_var, "Logical batch size (leave empty for default)", 0)
         self.create_param_row(batch_frame, "Micro Batch (-ub):", self.ubatch_size_var, "Physical batch size (leave empty for default)", 1)
         self.create_param_row(batch_frame, "Parallel Slots (--parallel):", self.parallel_var, "Number of parallel sequences", 2)
-        
+
         # Generation settings
         gen_frame = ttk.LabelFrame(scrollable_frame, text="Generation Settings", padding="5")
         gen_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(gen_frame, "Max Predict (-n):", self.n_predict_var, "Max tokens to predict (-1 = infinite)", 0)
         self.create_param_row(gen_frame, "Frequency Penalty:", self.frequency_penalty_var, "Frequency penalty (0.0-2.0)", 1)
-        
+
         # RoPE settings
         rope_frame = ttk.LabelFrame(scrollable_frame, text="RoPE Settings", padding="5")
         rope_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.create_param_row(rope_frame, "RoPE Freq Base:", self.rope_freq_base_var, "RoPE frequency base (leave empty for default)", 0)
         self.create_param_row(rope_frame, "RoPE Freq Scale:", self.rope_freq_scale_var, "RoPE frequency scale (leave empty for default)", 1)
-        
+
         # KV Cache settings
         cache_frame = ttk.LabelFrame(scrollable_frame, text="KV Cache Settings", padding="5")
         cache_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         cache_k_row = ttk.Frame(cache_frame)
         cache_k_row.pack(fill=tk.X, pady=2)
         ttk.Label(cache_k_row, text="Cache Type K (-ctk):", width=25).pack(side=tk.LEFT)
         cache_k_combo = ttk.Combobox(cache_k_row, textvariable=self.cache_type_k_var, values=self.cache_type_options, width=12, state="readonly")
         cache_k_combo.pack(side=tk.LEFT, padx=(5, 10))
         ttk.Label(cache_k_row, text="KV cache data type for K (empty = default)", foreground="gray").pack(side=tk.LEFT)
-        
+
         cache_v_row = ttk.Frame(cache_frame)
         cache_v_row.pack(fill=tk.X, pady=2)
         ttk.Label(cache_v_row, text="Cache Type V (-ctv):", width=25).pack(side=tk.LEFT)
         cache_v_combo = ttk.Combobox(cache_v_row, textvariable=self.cache_type_v_var, values=self.cache_type_options, width=12, state="readonly")
         cache_v_combo.pack(side=tk.LEFT, padx=(5, 10))
         ttk.Label(cache_v_row, text="KV cache data type for V (empty = default)", foreground="gray").pack(side=tk.LEFT)
-        
+
         # Additional flags
         flags_frame = ttk.LabelFrame(scrollable_frame, text="Additional Flags", padding="5")
         flags_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         ttk.Checkbutton(flags_frame, text="Flash Attention (-fa)", variable=self.flash_attn_var).pack(anchor=tk.W)
         ttk.Checkbutton(flags_frame, text="Lock memory (--mlock)", variable=self.mlock_var).pack(anchor=tk.W)
         ttk.Checkbutton(flags_frame, text="Disable mmap (--no-mmap)", variable=self.no_mmap_var).pack(anchor=tk.W)
@@ -415,83 +474,259 @@ class LlamaServerLauncher:
         ttk.Checkbutton(flags_frame, text="Enable metrics (--metrics)", variable=self.metrics_var).pack(anchor=tk.W)
         ttk.Checkbutton(flags_frame, text="Verbose output (--verbose)", variable=self.verbose_var).pack(anchor=tk.W)
         ttk.Checkbutton(flags_frame, text="Disable logging (--log-disable)", variable=self.log_disable_var).pack(anchor=tk.W)
-        
+
         # Custom arguments
         custom_frame = ttk.LabelFrame(scrollable_frame, text="Custom Arguments", padding="5")
         custom_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         ttk.Label(custom_frame, text="Additional arguments (space-separated):").pack(anchor=tk.W)
         ttk.Entry(custom_frame, textvariable=self.custom_args_var, width=60).pack(fill=tk.X, pady=(5, 0))
-        
+
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
+
     def create_param_row(self, parent, label: str, var: tk.StringVar, tooltip: str, row: int):
         """Create a parameter input row with label and entry."""
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
-        
+
         lbl = ttk.Label(frame, text=label, width=25)
         lbl.pack(side=tk.LEFT)
-        
+
         entry = ttk.Entry(frame, textvariable=var, width=15)
         entry.pack(side=tk.LEFT, padx=(5, 10))
-        
+
         ttk.Label(frame, text=tooltip, foreground="gray").pack(side=tk.LEFT)
-    
+
+    def build_presets_tab(self, parent):
+        """Build the presets management tab."""
+        # Active preset indicator for current model
+        active_frame = ttk.LabelFrame(parent, text="Current Model Preset", padding="10")
+        active_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.active_preset_label = ttk.Label(active_frame, textvariable=self.active_preset_var,
+                                              font=("TkDefaultFont", 10, "bold"))
+        self.active_preset_label.pack(anchor=tk.W)
+
+        # Save / Load preset section
+        manage_frame = ttk.LabelFrame(parent, text="Save / Load Preset", padding="10")
+        manage_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Preset name entry
+        name_row = ttk.Frame(manage_frame)
+        name_row.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(name_row, text="Preset Name:").pack(side=tk.LEFT)
+        self.preset_name_entry = ttk.Entry(name_row, textvariable=self.preset_name_var, width=30)
+        self.preset_name_entry.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
+
+        # Buttons row
+        btn_row = ttk.Frame(manage_frame)
+        btn_row.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Button(btn_row, text="Save Current as Preset", command=self.save_preset).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="Load Preset", command=self.load_preset).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="Delete Preset", command=self.delete_preset).pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Label(manage_frame,
+                  text="Type a preset name above, then Save to store or Load to apply.\n"
+                       "Loading a preset also links it to the currently selected model.",
+                  foreground="gray").pack(anchor=tk.W, pady=(5, 0))
+
+        # Saved presets list
+        list_frame = ttk.LabelFrame(parent, text="Saved Presets", padding="10")
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Listbox with scrollbar
+        lb_frame = ttk.Frame(list_frame)
+        lb_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.preset_listbox = tk.Listbox(lb_frame, height=8, font=("TkDefaultFont", 10))
+        preset_scrollbar = ttk.Scrollbar(lb_frame, orient="vertical", command=self.preset_listbox.yview)
+        self.preset_listbox.configure(yscrollcommand=preset_scrollbar.set)
+
+        self.preset_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        preset_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Clicking a preset fills in the name entry
+        self.preset_listbox.bind("<<ListboxSelect>>", self.on_preset_listbox_select)
+        # Double-click to load
+        self.preset_listbox.bind("<Double-1>", lambda e: self.load_preset())
+
+        # Populate preset list
+        self.refresh_preset_listbox()
+
+    def refresh_preset_listbox(self):
+        """Refresh the preset listbox with current presets."""
+        self.preset_listbox.delete(0, tk.END)
+        for name in sorted(self.presets.keys()):
+            self.preset_listbox.insert(tk.END, name)
+
+    def on_preset_listbox_select(self, event=None):
+        """When a preset is selected in the listbox, fill in the name entry."""
+        selection = self.preset_listbox.curselection()
+        if selection:
+            name = self.preset_listbox.get(selection[0])
+            self.preset_name_var.set(name)
+
+    def save_preset(self):
+        """Save the current parameter configuration as a named preset."""
+        name = SafeVar.get_str(self.preset_name_var)
+        if not name:
+            messagebox.showwarning("Preset Name Required", "Please type a preset name before saving.")
+            return
+
+        # Confirm overwrite if preset already exists
+        if name in self.presets:
+            if not messagebox.askyesno("Overwrite Preset",
+                                       f"Preset '{name}' already exists. Overwrite it?"):
+                return
+
+        settings = self.get_current_settings()
+        self.presets[name] = settings
+        self.config["presets"] = self.presets
+
+        # Link this preset to the current model
+        model_path = self.get_model_full_path()
+        if model_path:
+            self.model_preset_map[model_path] = name
+            self.config["model_preset_map"] = self.model_preset_map
+            self.active_preset_var.set(f"Active preset: {name}")
+
+        self.save_config()
+        self.refresh_preset_listbox()
+        self.status_var.set(f"Preset '{name}' saved")
+
+    def load_preset(self):
+        """Load a named preset and apply its settings."""
+        name = SafeVar.get_str(self.preset_name_var)
+        if not name:
+            messagebox.showwarning("Preset Name Required", "Please type or select a preset name to load.")
+            return
+
+        if name not in self.presets:
+            messagebox.showerror("Preset Not Found", f"No preset named '{name}' exists.")
+            return
+
+        self.apply_settings(self.presets[name])
+
+        # Link this preset to the current model
+        model_path = self.get_model_full_path()
+        if model_path:
+            self.model_preset_map[model_path] = name
+            self.config["model_preset_map"] = self.model_preset_map
+            self.active_preset_var.set(f"Active preset: {name}")
+            # Also persist as the model's settings so next load remembers
+            if "model_settings" not in self.config:
+                self.config["model_settings"] = {}
+            self.config["model_settings"][model_path] = self.presets[name].copy()
+            self.save_config()
+
+        self.update_command_preview()
+        self.status_var.set(f"Preset '{name}' loaded")
+
+    def delete_preset(self):
+        """Delete a named preset."""
+        name = SafeVar.get_str(self.preset_name_var)
+        if not name:
+            messagebox.showwarning("Preset Name Required", "Please type or select a preset name to delete.")
+            return
+
+        if name not in self.presets:
+            messagebox.showerror("Preset Not Found", f"No preset named '{name}' exists.")
+            return
+
+        if not messagebox.askyesno("Delete Preset", f"Delete preset '{name}'? This cannot be undone."):
+            return
+
+        del self.presets[name]
+        self.config["presets"] = self.presets
+
+        # Remove any model associations pointing to this preset
+        models_to_clear = [m for m, p in self.model_preset_map.items() if p == name]
+        for m in models_to_clear:
+            del self.model_preset_map[m]
+        self.config["model_preset_map"] = self.model_preset_map
+
+        # Update active preset label if it was pointing to the deleted preset
+        model_path = self.get_model_full_path()
+        if model_path and model_path in models_to_clear:
+            self.active_preset_var.set("No preset active")
+
+        self.save_config()
+        self.refresh_preset_listbox()
+        self.preset_name_var.set("")
+        self.status_var.set(f"Preset '{name}' deleted")
+
+    def update_active_preset_label(self):
+        """Update the active preset label for the current model."""
+        model_path = self.get_model_full_path()
+        if model_path and model_path in self.model_preset_map:
+            preset_name = self.model_preset_map[model_path]
+            # Verify the preset still exists
+            if preset_name in self.presets:
+                self.active_preset_var.set(f"Active preset: {preset_name}")
+            else:
+                # Preset was deleted, clean up stale reference
+                del self.model_preset_map[model_path]
+                self.config["model_preset_map"] = self.model_preset_map
+                self.active_preset_var.set("No preset active")
+        else:
+            self.active_preset_var.set("No preset active")
+
     def build_command_preview_section(self, parent):
         """Build the command preview section."""
         frame = ttk.LabelFrame(parent, text="Command Preview", padding="5")
         frame.pack(fill=tk.X, pady=(10, 0))
-        
+
         # Text widget for command display
         text_frame = ttk.Frame(frame)
         text_frame.pack(fill=tk.X)
-        
+
         self.command_text = tk.Text(text_frame, height=8, wrap=tk.WORD, font=("Courier", 9))
         self.command_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
+
         scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.command_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.command_text.configure(yscrollcommand=scrollbar.set)
-        
+
         # Buttons
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill=tk.X, pady=(5, 0))
-        
+
         ttk.Button(btn_frame, text="Update Preview", command=self.update_command_preview).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="Copy Command", command=self.copy_command).pack(side=tk.LEFT)
-    
+
     def build_control_buttons(self, parent):
         """Build the control buttons section."""
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, pady=(10, 0))
-        
+
         # Run mode selection
         mode_frame = ttk.LabelFrame(frame, text="Run Mode", padding="5")
         mode_frame.pack(side=tk.LEFT, padx=(0, 10))
-        
+
         ttk.Radiobutton(mode_frame, text="Run in Terminal", variable=self.run_in_terminal_var, value=True).pack(side=tk.LEFT)
         ttk.Radiobutton(mode_frame, text="Run in Background", variable=self.run_in_terminal_var, value=False).pack(side=tk.LEFT, padx=(10, 0))
-        
+
         # Control buttons
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(side=tk.RIGHT)
-        
+
         self.launch_btn = ttk.Button(btn_frame, text="Launch Server", command=self.launch_server, style="Accent.TButton")
         self.launch_btn.pack(side=tk.LEFT, padx=(0, 5))
-        
+
         self.kill_btn = ttk.Button(btn_frame, text="Kill Server", command=self.kill_server)
         self.kill_btn.pack(side=tk.LEFT, padx=(0, 5))
-        
+
         ttk.Button(btn_frame, text="Save Settings", command=self.save_current_settings).pack(side=tk.LEFT)
-    
+
     def build_status_bar(self, parent):
         """Build the status bar."""
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(parent, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(fill=tk.X, pady=(10, 0))
-    
+
     def browse_llama_server(self):
         """Browse for llama-server executable."""
         path = filedialog.askopenfilename(
@@ -501,7 +736,7 @@ class LlamaServerLauncher:
         if path:
             self.llama_server_path_var.set(path)
             self.save_config()
-    
+
     def browse_gguf_dir(self):
         """Browse for GGUF files directory."""
         path = filedialog.askdirectory(
@@ -512,7 +747,7 @@ class LlamaServerLauncher:
             self.gguf_dir_var.set(path)
             self.refresh_gguf_list()
             self.save_config()
-    
+
     def browse_mmproj(self):
         """Browse for mmproj file."""
         path = filedialog.askopenfilename(
@@ -522,7 +757,7 @@ class LlamaServerLauncher:
         )
         if path:
             self.mmproj_path_var.set(path)
-    
+
     def browse_chat_template_file(self):
         """Browse for chat template file."""
         path = filedialog.askopenfilename(
@@ -532,7 +767,7 @@ class LlamaServerLauncher:
         )
         if path:
             self.chat_template_file_var.set(path)
-    
+
     def refresh_gguf_list(self):
         """Refresh the list of GGUF files in the selected directory and subdirectories."""
         gguf_dir = SafeVar.get_str(self.gguf_dir_var)
@@ -540,7 +775,7 @@ class LlamaServerLauncher:
             self.gguf_files = []
             self.gguf_combo["values"] = []
             return
-        
+
         # Recursively find all .gguf files in directory and subdirectories
         # followlinks=True to include symbolic link directories
         gguf_files = []
@@ -551,22 +786,22 @@ class LlamaServerLauncher:
                     full_path = os.path.join(root, f)
                     rel_path = os.path.relpath(full_path, gguf_dir)
                     gguf_files.append(rel_path)
-        
+
         self.gguf_files = sorted(gguf_files)
-        
+
         # Apply current filter
         self.filter_gguf_list()
-        
+
         if self.gguf_files:
             self.status_var.set(f"Found {len(self.gguf_files)} GGUF file(s)")
         else:
             self.status_var.set("No GGUF files found in directory")
-    
+
     def filter_gguf_list(self, *args):
         """Filter the GGUF files list based on search text and show favorites first."""
         search_text = SafeVar.get_str(self.model_search_var).lower()
         gguf_dir = SafeVar.get_str(self.gguf_dir_var)
-        
+
         if not search_text:
             # No filter, show all files
             filtered = self.gguf_files.copy()
@@ -577,15 +812,15 @@ class LlamaServerLauncher:
                 f for f in self.gguf_files
                 if all(term in f.lower() for term in search_terms)
             ]
-        
+
         # Sort: favorites first, then alphabetically
         def sort_key(filename):
             full_path = os.path.join(gguf_dir, filename) if gguf_dir else filename
             is_favorite = full_path in self.favorites
             return (0 if is_favorite else 1, filename.lower())
-        
+
         filtered.sort(key=sort_key)
-        
+
         # Add star marker to favorites in display
         display_list = []
         for f in filtered:
@@ -594,18 +829,18 @@ class LlamaServerLauncher:
                 display_list.append(f"★ {f}")
             else:
                 display_list.append(f)
-        
+
         self.gguf_combo["values"] = display_list
-        
+
         # Update status
         if search_text and self.gguf_files:
             self.status_var.set(f"Showing {len(filtered)} of {len(self.gguf_files)} model(s)")
-    
+
     def _run_gguf_analysis(self, model_path: str) -> Dict[str, Any]:
         """
         Analyze a GGUF model file to extract metadata.
         Runs in a worker thread to avoid blocking the UI.
-        
+
         Uses gguf library for direct file reading (preferred) or falls back to llama-cpp-python.
         Returns a dictionary with model information or an error key.
         """
@@ -613,13 +848,13 @@ class LlamaServerLauncher:
             "path": model_path,
             "filename": os.path.basename(model_path),
         }
-        
+
         try:
             # Get file size
             file_size_bytes = os.path.getsize(model_path)
             result["file_size_bytes"] = file_size_bytes
             result["file_size_gb"] = round(file_size_bytes / (1024 ** 3), 2)
-            
+
             # Try gguf library first (most reliable - reads file directly)
             if GGUF_READER_AVAILABLE:
                 try:
@@ -628,7 +863,7 @@ class LlamaServerLauncher:
                 except Exception as e:
                     # Fall through to try llama-cpp-python
                     pass
-            
+
             # Try llama-cpp-python as fallback
             if LLAMA_CPP_AVAILABLE:
                 try:
@@ -637,27 +872,27 @@ class LlamaServerLauncher:
                 except Exception as e:
                     result["warning"] = f"Metadata extraction failed: {str(e)}"
                     return result
-            
+
             # No analysis libraries available
             if not GGUF_READER_AVAILABLE and not LLAMA_CPP_AVAILABLE:
                 result["warning"] = "Install 'gguf' or 'llama-cpp-python' for metadata"
-                
+
         except FileNotFoundError:
             result["error"] = "File not found"
         except PermissionError:
             result["error"] = "Permission denied"
         except Exception as e:
             result["error"] = f"Analysis failed: {str(e)}"
-        
+
         return result
-    
+
     def _analyze_with_gguf_reader(self, model_path: str, result: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyze GGUF using the gguf library (reads file directly without loading model).
         This is the most reliable method.
         """
         reader = GGUFReader(model_path)
-        
+
         # Helper function to extract field value
         def get_field_value(field_name: str, default=None):
             """Extract a single value from a GGUF field."""
@@ -707,7 +942,7 @@ class LlamaServerLauncher:
             except Exception:
                 pass
             return default
-        
+
         # Architecture
         arch = get_field_value("general.architecture", "unknown")
         if isinstance(arch, bytes):
@@ -719,11 +954,11 @@ class LlamaServerLauncher:
             except (ValueError, TypeError):
                 arch = str(arch)
         result["architecture"] = str(arch) if arch else "unknown"
-        
+
         # Model name
         model_name = get_field_value("general.name", result["filename"])
         result["model_name"] = str(model_name) if model_name else result["filename"]
-        
+
         # Context length - try architecture-specific key first
         ctx_length = get_field_value(f"{arch}.context_length")
         if ctx_length is None:
@@ -736,7 +971,7 @@ class LlamaServerLauncher:
                     if ctx_length is not None:
                         break
         result["context_length"] = ctx_length if ctx_length is not None else "unknown"
-        
+
         # Layer count (block_count) - try architecture-specific key first
         layer_count = get_field_value(f"{arch}.block_count")
         if layer_count is None:
@@ -747,7 +982,7 @@ class LlamaServerLauncher:
                     if layer_count is not None:
                         break
         result["layer_count"] = layer_count if layer_count is not None else "unknown"
-        
+
         # Embedding length - search for it
         embed_length = get_field_value(f"{arch}.embedding_length")
         if embed_length is None:
@@ -757,7 +992,7 @@ class LlamaServerLauncher:
                     if embed_length is not None:
                         break
         result["embedding_length"] = embed_length if embed_length is not None else "unknown"
-        
+
         # Head count - search for it
         head_count = get_field_value(f"{arch}.attention.head_count")
         if head_count is None:
@@ -767,7 +1002,7 @@ class LlamaServerLauncher:
                     if head_count is not None:
                         break
         result["head_count"] = head_count if head_count is not None else "unknown"
-        
+
         # Quantization - always use filename heuristic as it's most reliable
         quant = self._guess_quantization(result["filename"])
         if quant == "unknown":
@@ -776,9 +1011,9 @@ class LlamaServerLauncher:
             if file_type is not None:
                 quant = f"type_{file_type}"
         result["quantization"] = quant
-        
+
         return result
-    
+
     def _analyze_with_llama_cpp(self, model_path: str, result: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyze GGUF using llama-cpp-python (fallback method).
@@ -791,44 +1026,44 @@ class LlamaServerLauncher:
             n_ctx=0,
             n_gpu_layers=0,
         )
-        
+
         # Extract metadata from the model
         metadata = llm.metadata if hasattr(llm, 'metadata') else {}
-        
+
         # Architecture
         result["architecture"] = metadata.get("general.architecture", "unknown")
-        
+
         # Model name from metadata
         result["model_name"] = metadata.get("general.name", result["filename"])
-        
+
         # Context length
         ctx_key = f"{result['architecture']}.context_length"
         result["context_length"] = metadata.get(ctx_key, metadata.get("general.context_length", "unknown"))
-        
+
         # Layer count
         layer_key = f"{result['architecture']}.block_count"
         result["layer_count"] = metadata.get(layer_key, "unknown")
-        
+
         # Embedding length
         embed_key = f"{result['architecture']}.embedding_length"
         result["embedding_length"] = metadata.get(embed_key, "unknown")
-        
+
         # Head count
         head_key = f"{result['architecture']}.attention.head_count"
         result["head_count"] = metadata.get(head_key, "unknown")
-        
+
         # Quantization type
         result["quantization"] = metadata.get("general.quantization_version", self._guess_quantization(result["filename"]))
-        
+
         # Vocab size
         if hasattr(llm, 'n_vocab'):
             result["vocab_size"] = llm.n_vocab()
-        
+
         # Clean up
         del llm
-        
+
         return result
-    
+
     def _guess_quantization(self, filename: str) -> str:
         """Guess quantization type from filename."""
         filename_upper = filename.upper()
@@ -843,25 +1078,25 @@ class LlamaServerLauncher:
             if qt in filename_upper or qt.replace("_", "-") in filename_upper:
                 return qt
         return "unknown"
-    
+
     def _update_ui_after_analysis(self, result: Dict[str, Any]):
         """Update UI elements after GGUF analysis completes."""
         if "error" in result:
             info_text = f"⚠ {result.get('filename', 'Unknown')}: {result['error']}"
             self.model_info_var.set(info_text)
             return
-        
+
         # Build info string
         parts = []
-        
+
         # Architecture
         if result.get("architecture") and result["architecture"] != "unknown":
             parts.append(f"Arch: {result['architecture']}")
-        
+
         # Layers
         if result.get("layer_count") and result["layer_count"] != "unknown":
             parts.append(f"Layers: {result['layer_count']}")
-        
+
         # Context length
         if result.get("context_length") and result["context_length"] != "unknown":
             ctx = result["context_length"]
@@ -870,52 +1105,52 @@ class LlamaServerLauncher:
             else:
                 ctx_display = str(ctx)
             parts.append(f"Ctx: {ctx_display}")
-        
+
         # File size
         if result.get("file_size_gb"):
             parts.append(f"Size: {result['file_size_gb']} GB")
-        
+
         # Quantization
         if result.get("quantization") and result["quantization"] != "unknown":
             parts.append(f"Quant: {result['quantization']}")
-        
+
         if parts:
             info_text = " │ ".join(parts)
         else:
             info_text = f"Size: {result.get('file_size_gb', '?')} GB"
-        
+
         # Add warning if llama-cpp-python not available
         if result.get("warning"):
             info_text = f"Size: {result.get('file_size_gb', '?')} GB │ ⚠ {result['warning']}"
-        
+
         self.model_info_var.set(info_text)
-        
+
         # Store analysis result for potential use (e.g., setting max layers)
         self.last_analysis_result = result
-    
+
     def _start_analysis(self, model_path: str):
         """Start GGUF analysis in a background thread."""
         # Cancel any ongoing analysis for a different file
         if self.current_analysis_path != model_path:
             self.current_analysis_path = model_path
             self.model_info_var.set("Analyzing model...")
-            
+
             def analysis_worker():
                 result = self._run_gguf_analysis(model_path)
                 # Schedule UI update on main thread
                 if self.current_analysis_path == model_path:  # Still relevant
                     self.root.after(0, lambda: self._update_ui_after_analysis(result))
-            
+
             self.analysis_thread = threading.Thread(target=analysis_worker, daemon=True)
             self.analysis_thread.start()
-    
+
     def toggle_favorite(self):
         """Toggle favorite status for the selected model."""
         model_path = self.get_model_full_path()
         if not model_path:
             self.status_var.set("No model selected")
             return
-        
+
         if model_path in self.favorites:
             # Remove from favorites
             del self.favorites[model_path]
@@ -927,10 +1162,10 @@ class LlamaServerLauncher:
                 "added": datetime.now().isoformat()
             }
             self.status_var.set(f"Added to favorites: {os.path.basename(model_path)}")
-        
+
         self.update_favorite_ui()
         self.save_config()
-        
+
         # Refresh list to update star markers while preserving selection
         current_selection = os.path.basename(model_path)
         self.refresh_gguf_list()
@@ -941,15 +1176,15 @@ class LlamaServerLauncher:
             if actual_name == current_selection:
                 self.selected_gguf_var.set(display_name)
                 break
-    
+
     def save_note(self, event=None):
         """Save note for the selected model."""
         model_path = self.get_model_full_path()
         if not model_path:
             return
-        
+
         note = SafeVar.get_str(self.note_var)
-        
+
         # If model is not in favorites but has a note, add to favorites
         if model_path not in self.favorites:
             if note.strip():  # Only add if note is not empty
@@ -959,7 +1194,7 @@ class LlamaServerLauncher:
                 }
                 self.update_favorite_ui()
                 self.status_var.set(f"Note saved and added to favorites")
-                
+
                 # Refresh list to show star marker
                 current_selection = os.path.basename(model_path)
                 self.refresh_gguf_list()
@@ -973,13 +1208,13 @@ class LlamaServerLauncher:
         else:
             self.favorites[model_path]["note"] = note
             self.status_var.set("Note saved")
-        
+
         self.save_config()
-    
+
     def update_favorite_ui(self):
         """Update the favorite button and note display for the current model."""
         model_path = self.get_model_full_path()
-        
+
         if model_path and model_path in self.favorites:
             # Model is a favorite - show filled star
             self.favorite_btn.configure(text="★")
@@ -990,7 +1225,7 @@ class LlamaServerLauncher:
             # Model is not a favorite - show empty star
             self.favorite_btn.configure(text="☆")
             self.note_var.set("")
-    
+
     def on_gguf_selected(self, event=None):
         """Handle GGUF file selection."""
         selected = SafeVar.get_str(self.selected_gguf_var)
@@ -999,26 +1234,29 @@ class LlamaServerLauncher:
             if selected.startswith("★ "):
                 selected = selected[2:]
                 self.selected_gguf_var.set(selected)
-            
+
             full_path = os.path.join(SafeVar.get_str(self.gguf_dir_var), selected)
             self.load_settings_for_model(full_path)
-            
+
             # Default model alias to GGUF filename (without extension and path)
             if not SafeVar.get_str(self.model_alias_var):
                 # Get base filename and remove .gguf extension
                 base_name = os.path.basename(selected)
                 model_name = base_name[:-5] if base_name.lower().endswith(".gguf") else base_name
                 self.model_alias_var.set(model_name)
-            
+
             # Start GGUF analysis in background
             self._start_analysis(full_path)
-            
+
             # Update favorite UI
             self.update_favorite_ui()
-            
+
+            # Update active preset label
+            self.update_active_preset_label()
+
             self.update_command_preview()
             self.status_var.set(f"Selected: {selected}")
-    
+
     def get_model_full_path(self) -> str:
         """Get the full path of the selected model."""
         gguf_dir = SafeVar.get_str(self.gguf_dir_var)
@@ -1029,148 +1267,148 @@ class LlamaServerLauncher:
         if gguf_dir and selected:
             return os.path.join(gguf_dir, selected)
         return ""
-    
+
     def build_command(self) -> list[str]:
         """Build the command arguments list."""
         cmd = [SafeVar.get_str(self.llama_server_path_var)]
-        
+
         model_path = self.get_model_full_path()
         if model_path:
             cmd.extend(["-m", model_path])
-        
+
         # Common parameters
         host = SafeVar.get_str(self.host_var)
         if host:
             cmd.extend(["--host", host])
-        
+
         port = SafeVar.get_str(self.port_var)
         if port:
             cmd.extend(["--port", port])
-        
+
         ngl = SafeVar.get_str(self.ngl_var)
         if ngl:
             cmd.extend(["-ngl", ngl])
-        
+
         ncmoe = SafeVar.get_str(self.ncmoe_var)
         if ncmoe:
             cmd.extend(["-ncmoe", ncmoe])
-        
+
         if self.jinja_var.get():
             cmd.append("--jinja")
-        
+
         threads = SafeVar.get_str(self.threads_var)
         if threads:
             cmd.extend(["--threads", threads])
-        
+
         ctx_size = SafeVar.get_str(self.ctx_size_var)
         if ctx_size:
             cmd.extend(["--ctx-size", ctx_size])
-        
+
         temp = SafeVar.get_str(self.temp_var)
         if temp:
             cmd.extend(["--temp", temp])
-        
+
         min_p = SafeVar.get_str(self.min_p_var)
         if min_p:
             cmd.extend(["--min-p", min_p])
-        
+
         top_p = SafeVar.get_str(self.top_p_var)
         if top_p:
             cmd.extend(["--top-p", top_p])
-        
+
         top_k = SafeVar.get_str(self.top_k_var)
         if top_k:
             cmd.extend(["--top-k", top_k])
-        
+
         presence_penalty = SafeVar.get_str(self.presence_penalty_var)
         if presence_penalty:
             cmd.extend(["--presence-penalty", presence_penalty])
-        
+
         # Additional parameters
         mmproj = SafeVar.get_str(self.mmproj_path_var)
         if mmproj:
             cmd.extend(["--mmproj", mmproj])
-        
+
         # OpenAI-compatible API settings
         api_key = SafeVar.get_str(self.api_key_var)
         if api_key:
             cmd.extend(["--api-key", api_key])
-        
+
         model_alias = SafeVar.get_str(self.model_alias_var)
         if model_alias:
             cmd.extend(["--alias", model_alias])
-        
+
         chat_template = SafeVar.get_str(self.chat_template_var)
         if chat_template:
             cmd.extend(["--chat-template", chat_template])
-        
+
         chat_template_file = SafeVar.get_str(self.chat_template_file_var)
         if chat_template_file:
             cmd.extend(["--chat-template-file", chat_template_file])
-        
+
         batch_size = SafeVar.get_str(self.batch_size_var)
         if batch_size:
             cmd.extend(["-b", batch_size])
-        
+
         ubatch_size = SafeVar.get_str(self.ubatch_size_var)
         if ubatch_size:
             cmd.extend(["-ub", ubatch_size])
-        
+
         parallel = SafeVar.get_str(self.parallel_var)
         if parallel:
             cmd.extend(["--parallel", parallel])
-        
+
         n_predict = SafeVar.get_str(self.n_predict_var)
         if n_predict:
             cmd.extend(["-n", n_predict])
-        
+
         repeat_penalty = SafeVar.get_str(self.repeat_penalty_var)
         if repeat_penalty:
             cmd.extend(["--repeat-penalty", repeat_penalty])
-        
+
         frequency_penalty = SafeVar.get_str(self.frequency_penalty_var)
         if frequency_penalty:
             cmd.extend(["--frequency-penalty", frequency_penalty])
-        
+
         rope_freq_base = SafeVar.get_str(self.rope_freq_base_var)
         if rope_freq_base:
             cmd.extend(["--rope-freq-base", rope_freq_base])
-        
+
         rope_freq_scale = SafeVar.get_str(self.rope_freq_scale_var)
         if rope_freq_scale:
             cmd.extend(["--rope-freq-scale", rope_freq_scale])
-        
+
         # KV Cache settings
         cache_type_k = SafeVar.get_str(self.cache_type_k_var)
         if cache_type_k:
             cmd.extend(["--cache-type-k", cache_type_k])
-        
+
         cache_type_v = SafeVar.get_str(self.cache_type_v_var)
         if cache_type_v:
             cmd.extend(["--cache-type-v", cache_type_v])
-        
+
         # Flags
         if self.flash_attn_var.get():
             cmd.extend(["-fa", "on"])
-        
+
         if self.mlock_var.get():
             cmd.append("--mlock")
-        
+
         if self.no_mmap_var.get():
             cmd.append("--no-mmap")
-        
+
         if self.cont_batching_var.get():
             cmd.append("-cb")
-        
+
         if self.metrics_var.get():
             cmd.append("--metrics")
-        
+
         if self.verbose_var.get():
             cmd.append("--verbose")
-        
+
         if self.log_disable_var.get():
             cmd.append("--log-disable")
-        
+
         # Custom arguments - use shlex.split to properly handle quoted strings
         custom = SafeVar.get_str(self.custom_args_var)
         if custom:
@@ -1179,15 +1417,15 @@ class LlamaServerLauncher:
             except ValueError:
                 # If shlex.split fails (e.g., unclosed quotes), fall back to simple split
                 cmd.extend(custom.split())
-        
+
         return cmd
-    
+
     def build_command_string(self) -> str:
         """Build a formatted command string for display."""
         cmd = self.build_command()
         if len(cmd) < 2:
             return "# No model selected"
-        
+
         def quote_if_needed(s: str) -> str:
             """Quote string if it contains special characters."""
             if not s:
@@ -1197,7 +1435,7 @@ class LlamaServerLauncher:
             if any(c in s for c in ' \t\n\'"\\$`!*?[]{}();&|<>'):
                 return shlex.quote(s)
             return s
-        
+
         # Format with line continuations
         lines = [cmd[0]]  # Executable
         i = 1
@@ -1212,21 +1450,21 @@ class LlamaServerLauncher:
             else:
                 lines.append(f"  {quote_if_needed(cmd[i])}")
                 i += 1
-        
+
         return " \\\n".join(lines)
-    
+
     def update_command_preview(self):
         """Update the command preview text."""
         self.command_text.delete("1.0", tk.END)
         self.command_text.insert("1.0", self.build_command_string())
-    
+
     def copy_command(self):
         """Copy the command to clipboard."""
         cmd = self.build_command_string()
         self.root.clipboard_clear()
         self.root.clipboard_append(cmd)
         self.status_var.set("Command copied to clipboard")
-    
+
     def launch_server(self):
         """Launch the llama-server."""
         # Validate
@@ -1234,21 +1472,21 @@ class LlamaServerLauncher:
         if not server_path or not os.path.isfile(server_path):
             messagebox.showerror("Error", "Please select a valid llama-server executable")
             return
-        
+
         if not os.access(server_path, os.X_OK):
             messagebox.showerror("Error", "llama-server is not executable. Run: chmod +x " + server_path)
             return
-        
+
         model_path = self.get_model_full_path()
         if not model_path or not os.path.isfile(model_path):
             messagebox.showerror("Error", "Please select a valid GGUF model file")
             return
-        
+
         # Save settings before launching
         self.save_current_settings()
-        
+
         cmd = self.build_command()
-        
+
         if self.run_in_terminal_var.get():
             # Run in terminal
             try:
@@ -1259,11 +1497,11 @@ class LlamaServerLauncher:
                     ["xfce4-terminal", "-e", "bash -c"],
                     ["xterm", "-e", "bash", "-c"],
                 ]
-                
+
                 # Use shlex.quote for proper shell escaping of all arguments
                 cmd_str = " ".join(shlex.quote(c) for c in cmd)
                 full_cmd_str = f'{cmd_str}; echo "\\nPress Enter to close..."; read'
-                
+
                 launched = False
                 for term_cmd in terminals:
                     try:
@@ -1275,7 +1513,7 @@ class LlamaServerLauncher:
                         break
                     except FileNotFoundError:
                         continue
-                
+
                 if launched:
                     self.status_var.set("Server launched in terminal")
                     self.show_api_info()
@@ -1296,18 +1534,18 @@ class LlamaServerLauncher:
                 self.show_api_info()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to launch server: {e}")
-    
+
     def show_api_info(self):
         """Show OpenAI-compatible API endpoint information."""
         host = SafeVar.get_str(self.host_var) or "localhost"
         port = SafeVar.get_str(self.port_var) or "8033"
         api_key = SafeVar.get_str(self.api_key_var)
         model_alias = SafeVar.get_str(self.model_alias_var) or "default"
-        
+
         # Use localhost for display if bound to all interfaces
         display_host = "localhost" if host == "0.0.0.0" else host
         base_url = f"http://{display_host}:{port}"
-        
+
         info = f"""Server starting at: {base_url}
 
 ═══ OpenAI-Compatible API Endpoints ═══
@@ -1339,39 +1577,39 @@ response = client.chat.completions.create(
 )
 print(response.choices[0].message.content)
 """
-        
+
         # Create info dialog
         info_window = tk.Toplevel(self.root)
         info_window.title("API Endpoint Information")
         info_window.geometry("550x580")
         info_window.transient(self.root)
-        
+
         # Text widget with scrollbar
         frame = ttk.Frame(info_window, padding="10")
         frame.pack(fill=tk.BOTH, expand=True)
-        
+
         text = tk.Text(frame, wrap=tk.WORD, font=("Courier", 10))
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
         text.configure(yscrollcommand=scrollbar.set)
-        
+
         text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         text.insert("1.0", info)
         text.configure(state="disabled")
-        
+
         # Buttons
         btn_frame = ttk.Frame(info_window)
         btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        
+
         def copy_base_url():
             self.root.clipboard_clear()
             self.root.clipboard_append(f"{base_url}/v1")
             self.status_var.set("Base URL copied to clipboard")
-        
+
         ttk.Button(btn_frame, text="Copy Base URL", command=copy_base_url).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="Close", command=info_window.destroy).pack(side=tk.RIGHT)
-    
+
     def kill_server(self):
         """Kill the llama-server process."""
         # First try to kill our own process
@@ -1389,7 +1627,7 @@ print(response.choices[0].message.content)
                 return
             except Exception as e:
                 self.status_var.set(f"Error stopping server: {e}")
-        
+
         # If no background process, ask about using pkill
         result = messagebox.askyesno(
             "Kill llama-server",
@@ -1397,14 +1635,14 @@ print(response.choices[0].message.content)
             "This will use 'pkill llama-server' to terminate any running instances.",
             icon="warning"
         )
-        
+
         if result:
             try:
                 subprocess.run(["pkill", "-f", "llama-server"], check=False)
                 self.status_var.set("Sent kill signal to all llama-server processes")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to kill processes: {e}")
-    
+
     def get_current_settings(self) -> dict:
         """Get all current settings as a dictionary."""
         return {
@@ -1445,7 +1683,7 @@ print(response.choices[0].message.content)
             "custom_args": SafeVar.get_str(self.custom_args_var),
             "run_in_terminal": self.run_in_terminal_var.get(),
         }
-    
+
     def apply_settings(self, settings: dict):
         """Apply settings from a dictionary."""
         self.host_var.set(settings.get("host", "0.0.0.0"))
@@ -1484,23 +1722,31 @@ print(response.choices[0].message.content)
         self.log_disable_var.set(settings.get("log_disable", False))
         self.custom_args_var.set(settings.get("custom_args", ""))
         self.run_in_terminal_var.set(settings.get("run_in_terminal", True))
-    
+
     def save_current_settings(self):
         """Save current settings for the selected model."""
         model_path = self.get_model_full_path()
         if not model_path:
             self.status_var.set("No model selected to save settings for")
             return
-        
+
         settings = self.get_current_settings()
-        
+
         if "model_settings" not in self.config:
             self.config["model_settings"] = {}
-        
+
         self.config["model_settings"][model_path] = settings
+
+        # If this model has an active preset, check if settings still match
+        if model_path in self.model_preset_map:
+            preset_name = self.model_preset_map[model_path]
+            if preset_name in self.presets and self.presets[preset_name] != settings:
+                # Settings diverged from the preset
+                self.active_preset_var.set(f"Active preset: {preset_name} (modified)")
+
         self.save_config()
         self.status_var.set(f"Settings saved for {os.path.basename(model_path)}")
-    
+
     def load_settings_for_model(self, model_path: str):
         """Load saved settings for a specific model."""
         if "model_settings" in self.config and model_path in self.config["model_settings"]:
@@ -1510,7 +1756,7 @@ print(response.choices[0].message.content)
             # Apply defaults
             self.apply_settings({})
             self.status_var.set(f"Using default settings for {os.path.basename(model_path)}")
-    
+
     def load_config(self) -> dict:
         """Load configuration from file."""
         try:
@@ -1520,7 +1766,7 @@ print(response.choices[0].message.content)
         except Exception as e:
             print(f"Error loading config: {e}")
         return {}
-    
+
     def save_config(self):
         """Save configuration to file."""
         try:
@@ -1532,12 +1778,14 @@ print(response.choices[0].message.content)
                 selected = selected[2:]
             self.config["last_selected_gguf"] = selected
             self.config["favorites"] = self.favorites
-            
+            self.config["presets"] = self.presets
+            self.config["model_preset_map"] = self.model_preset_map
+
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config, f, indent=2)
         except Exception as e:
             print(f"Error saving config: {e}")
-    
+
     def load_last_session(self):
         """Load the last session settings."""
         # Load last GGUF directory
@@ -1545,7 +1793,7 @@ print(response.choices[0].message.content)
         if last_dir and os.path.isdir(last_dir):
             self.gguf_dir_var.set(last_dir)
             self.refresh_gguf_list()
-            
+
             # Select last used GGUF if still available
             last_gguf = self.config.get("last_selected_gguf", "")
             if last_gguf:
@@ -1559,11 +1807,11 @@ print(response.choices[0].message.content)
                             self.selected_gguf_var.set(display_name)
                             self.on_gguf_selected()
                             break
-    
+
     def on_close(self):
         """Handle application close."""
         self.save_config()
-        
+
         # Warn about background process
         if self.server_process is not None:
             result = messagebox.askyesno(
@@ -1573,14 +1821,14 @@ print(response.choices[0].message.content)
             )
             if result:
                 self.kill_server()
-        
+
         self.root.destroy()
 
 
 def main():
     """Main entry point."""
     root = tk.Tk()
-    
+
     # Try to set a modern theme
     try:
         style = ttk.Style()
@@ -1591,7 +1839,7 @@ def main():
             style.theme_use("alt")
     except Exception:
         pass
-    
+
     app = LlamaServerLauncher(root)
     root.mainloop()
 
