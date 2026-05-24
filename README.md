@@ -109,11 +109,11 @@ The script will:
 
 ### 4. Download the Launcher
 
-Save the `llama_server_launcher_v5.py` file to your preferred location
+Save the `llama_server_launcher_v9.py` file to your preferred location
 
 5. **Make executable** (optional):
    ```bash
-   chmod +x llama_server_launcher_v5.py
+   chmod +x llama_server_launcher_v9.py
    ```
 
 ## Usage
@@ -122,7 +122,7 @@ Save the `llama_server_launcher_v5.py` file to your preferred location
 
 1. **Launch the GUI**:
    ```bash
-   python3 llama_server_launcher_v5.py
+   python3 llama_server_launcher_v9.py
    ```
 
 2. **Configure llama-server path**:
