@@ -1,9 +1,3 @@
-# Llama Server Launcher - Requirements
-# Install: pip install -r requirements.txt --break-system-packages
-
-# GGUF metadata analysis (recommended - lightweight)
+PyQt6
+numpy>=1.21
 gguf
-
-# Alternative: llama-cpp-python (heavier, optional fallback)
-# Uncomment if you prefer this over gguf:
-# llama-cpp-python
